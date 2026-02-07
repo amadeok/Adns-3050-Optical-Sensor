@@ -6,41 +6,38 @@ byte x = 0;
 byte y = 0;
 
 void setup() {
-startup();//setup communication
+    Serial.begin(115200);
+  delay(1200);   
+  Serial.println("Init");  
+  startup();
 
-pinMode(8,INPUT_PULLUP);
-pinMode(9,INPUT_PULLUP);
-Mouse.begin(); //start mouse emulation
+  // Optional: read some status registers after init
+  Serial.println(F("Initial status check:"));
+  Read(MOTION_ST);
+  Read(SQUAL);
+  Read(SHUT_HI);
+  Read(SHUT_LO);
+  Serial.println();
 
+  // Serial.println(F("Reading MOTION_CTRL for verification..."));
+  // readCount = Read(MOTION_CTRL);
 }
-
 
 void loop() {
-x = getX();
-y = 0-getY();
-Mouse.move(x,y,0);//Move the cursor
 
-  if(digitalRead(9)==0){ //if the the left mouse button is pressed, press it
-    Mouse.press(MOUSE_LEFT);
-    while(digitalRead(9)==0){// while it is pressed move the cursor if the mouse is moved
-      x = getX();
-y = 0-getY();
-  Mouse.move(x,y,0);
-  delay(10);
-    }
-  }
-   Mouse.release();//release the left mouse button
-   
-    if(digitalRead(8)==0){//if the the right mouse button is pressed, press it
-    Mouse.press(MOUSE_RIGHT);
-    while(digitalRead(8)==0){{// while it is pressed move the cursor if the mouse is moved
-    x = getX();
-    y = 0-getY();
-  Mouse.move(x,y,0);
-      delay(10);
-    }
-    }
-  
-Mouse.release(MOUSE_RIGHT);//release the right mouse button
-}
+  // Serial.println("\n");
+  // Write(MOTION_CTRL, readCount);
+
+  // Serial.println(F("Reading MOTION_CTRL for verification..."));
+  // byte motion_ctrl = Read(MOTION_CTRL);
+
+
+
+   delay(10);
+  // Simple demo: read motion every 100 ms
+  // static unsigned long last = 0;
+  // if (millis() - last > 100) {
+  //   last = millis();
+     getXY();
+  // }
 }

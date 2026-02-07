@@ -1,10 +1,11 @@
+#include "USBAPI.h"
 #include <SPI.h>
 
  // SPI and misc pins for the ADNS
  #define PIN_SCLK   SCK
  #define PIN_MISO   MISO
  #define PIN_MOSI   MOSI
- #define PIN_NCS    3
+ #define PIN_NCS    10
  #define PIN_MOTION 5
 
 
@@ -46,96 +47,178 @@
  #define REST_MODE_CONFIG                 0x45
 
 
-void com_start(){
+void com_start() {
+  Serial.println(F("[CS] Starting communication burst"));
   digitalWrite(PIN_NCS, HIGH);
   delay(20);
   digitalWrite(PIN_NCS, LOW);
+  Serial.println(F("[CS] NCS → LOW (communication started)"));
 }
 
+// byte Read(byte reg_addr){
+//   digitalWrite(PIN_NCS, LOW);//begin communication
+//   // send address of the register, with MSBit = 0 to say it's reading
+//   SPI.transfer(reg_addr & 0x7f );
+//   delayMicroseconds(100);
+//   // read data
+//   byte data = SPI.transfer(0);
+//   delayMicroseconds(30);
+//   digitalWrite(PIN_NCS, HIGH);//end communication
+//   delayMicroseconds(30);
 
+//   return data;
+// }
+int readCount = 0;
+byte Read(byte reg_addr) {
+  Serial.print(F("[RD] Reading register 0x"));
+  if (reg_addr < 0x10) Serial.print("0");
+  Serial.println(reg_addr, HEX);
 
-byte Read(byte reg_addr){
-  digitalWrite(PIN_NCS, LOW);//begin communication
-  // send address of the register, with MSBit = 0 to say it's reading
-  SPI.transfer(reg_addr & 0x7f );
+  digitalWrite(PIN_NCS, LOW);
+  delayMicroseconds(10);
+
+  // Send address (MSB=0 for read)
+  SPI.transfer(reg_addr & 0x7F);
   delayMicroseconds(100);
-  // read data
+
+  // Read data
   byte data = SPI.transfer(0);
   delayMicroseconds(30);
-  digitalWrite(PIN_NCS, HIGH);//end communication
+
+  digitalWrite(PIN_NCS, HIGH);
   delayMicroseconds(30);
+
+  Serial.print(F("[RD] Value = 0x"));
+  if (data < 0x10) Serial.print("0");
+  Serial.print(data, HEX);
+  Serial.print(" (");
+  Serial.print(data, DEC);
+  Serial.print(")");
+  Serial.print("(c ");
+  Serial.print(readCount++, DEC);
+  Serial.println(")");
 
   return data;
 }
 
+void Write(byte reg_addr, byte data) {
+  Serial.print(F("[WR] Writing register 0x"));
+  if (reg_addr < 0x10) Serial.print("0");
+  Serial.print(reg_addr, HEX);
+  Serial.print(" ← 0x");
+  if (data < 0x10) Serial.print("0");
+  Serial.println(data, HEX);
 
-void Write(byte reg_addr, byte data){
   digitalWrite(PIN_NCS, LOW);
-  //send address of the register, with MSBit = 1 to say it's writing
-  SPI.transfer(reg_addr | 0x80 );
-  //send data
+  delayMicroseconds(10);
+
+  SPI.transfer(reg_addr | 0x80);   // MSB=1 → write
   SPI.transfer(data);
-  delayMicroseconds(30);
- digitalWrite(PIN_NCS, HIGH);//end communication
-  delayMicroseconds(30);
+  delayMicroseconds(50);
+
+  digitalWrite(PIN_NCS, HIGH);
+  delayMicroseconds(50);
 }
 
-void startup(){
-  //--------Setup SPI Communication---------
-  Serial.begin(115200);
-  byte out = 0;
-  byte read = 0;
-  byte bit = 0;
-  pinMode(PIN_MISO,INPUT);
-  pinMode(PIN_NCS,OUTPUT);
-  SPI.begin();
-  // set the details of the communication
-  SPI.setBitOrder(MSBFIRST); // transimission order of bits
-  SPI.setDataMode(SPI_MODE3); // sampling on rising edge
-  SPI.setClockDivider(SPI_CLOCK_DIV16); // 16MHz/16 = 1MHz
-  delay(10);
+void startup() {
+                // Give serial monitor time to connect
+  Serial.println(F("\n=== ADNS Sensor Startup ==="));
+  Serial.println(F("Build date: " __DATE__ " " __TIME__));
 
-  //----------------- Power Up and config ---------------
+  pinMode(PIN_MISO, INPUT);
+  pinMode(PIN_NCS, OUTPUT);
+  digitalWrite(PIN_NCS, HIGH);    // idle high
+
+  Serial.println(F("Initializing SPI..."));
+  SPI.begin();
+  SPI.setBitOrder(MSBFIRST);
+  SPI.setDataMode(SPI_MODE3);
+  SPI.setClockDivider(SPI_CLOCK_DIV16);  // 1 MHz
+  Serial.println(F("SPI configured: Mode 3, 1 MHz, MSBFIRST"));
+
+  delay(50);
+
+  Serial.println(F("Performing soft reset..."));
   com_start();
-  Write(RESET, 0x5a); // force reset
-  delay(100); // wait for it to reboot
-  Write(MOUSE_CTRL, 0x20);//Setup Mouse Control
-  Write(MOTION_CTRL, 0x00);//Clear Motion Control register
-  delay(100);
+  Write(RESET, 0x5A);
+  Serial.println(F("Reset command sent (0x5A)"));
+  delay(150);
+
+  Serial.println(F("Configuring mouse control..."));
+  Write(MOUSE_CTRL, 0x20);
+  delay(20);
+
+  // Serial.println(F("Clearing motion control register..."));
+  // Write(MOTION_CTRL, 0x00);
+  // delay(100);
+
+  // Optional: read product ID to verify communication
+  Serial.println(F("Reading Product ID for verification..."));
+  byte prod_id = Read(PROD_ID);
+  Serial.print(F("→ Product ID = 0x"));
+  Serial.println(prod_id, HEX);
+
+  byte rev_id = Read(REV_ID);
+  Serial.print(F("→ Revision ID = 0x"));
+  Serial.println(rev_id, HEX);
+
+  Serial.println(F("=== Startup sequence finished ===\n"));
+}
+
+int convTwosComp(int b) {
+  if (b & 0x80) {
+    b = -1 * ((b ^ 0xFF) + 1);
+  }
+  return b;
+}
+
+void getXY() {
+  Serial.println(F("--- Reading motion deltas ---"));
+
+  byte mot = Read(MOTION_ST);
+  Serial.print(F("MOTION register: 0x"));
+  Serial.print(mot, HEX);
+
+  if (mot & 0x80) {
+    Serial.println(F(" (Motion detected)"));
+  } else {
+    Serial.println(F(" (No motion)"));
   }
 
+  byte x = Read(DELTA_X);
+  byte y = Read(DELTA_Y);
 
+  int dx = convTwosComp(x);
+  int dy = convTwosComp(y);
 
-int convTwosComp(int b){ //Convert from 2's complement
-   if(b & 0x80){
-     b = -1 * ((b ^ 0xff) + 1);
-     }
-   return b;
-   }
+  Serial.print(F("Δx = "));
+  Serial.print(dx);
+  Serial.print(F("   (raw byte = 0x"));
+  if (x < 0x10) Serial.print("0");
+  Serial.print(x, HEX);
+  Serial.println(")");
 
-void getXY(){//Prints out X and Y values to the serial terminal, use getX and getY sequentially for most operations
-  byte x = 0;
-  byte y = 0;
-	 x= Read(0x03);
-	    y = Read(0x04);
-     Serial.println("x");
-	     Serial.println(convTwosComp(x));
-      Serial.println("y");
-Serial.println(convTwosComp(y));
+  Serial.print(F("Δy = "));
+  Serial.print(dy);
+  Serial.print(F("   (raw byte = 0x"));
+  if (y < 0x10) Serial.print("0");
+  Serial.print(y, HEX);
+  Serial.println(")\n");
 }
 
-
-int getX(){//returns the X acceleration value
-  byte x = 0;
-  x= Read(0x03);
-  return(convTwosComp(x));
+int getX() {
+  byte x = Read(DELTA_X);
+  return convTwosComp(x);
 }
 
-int getY(){//returns the Y acceleration value
-  byte y = 0;
-  y= Read(0x04);
-  return(convTwosComp(y));
+int getY() {
+  byte y = Read(DELTA_Y);
+  return convTwosComp(y);
 }
+
+// ────────────────────────────────────────────────
+//                  Typical setup() / loop()
+// ────────────────────────────────────────────────
 
 
 
